@@ -1,0 +1,115 @@
+name: Build America Audit Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "build_payload/**"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct source archive
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem build_payload\part_*.txt | Sort-Object Name
+          if (-not $parts) { throw "No build payload parts found." }
+          $base64 = [string]::Concat(($parts | ForEach-Object { Get-Content $_.FullName -Raw }))
+          [IO.File]::WriteAllBytes("AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip", [Convert]::FromBase64String($base64))
+          Expand-Archive -Path "AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip" -DestinationPath "src" -Force
+          if (-not (Test-Path "src\AmericaAudit_Desktop_1.0.0")) { throw "Expected project root was not found after extraction." }
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "src/AmericaAudit_Desktop_1.0.0/backend/requirements*.txt"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "src/AmericaAudit_Desktop_1.0.0/frontend/package-lock.json"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Prepare Python environment
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        shell: pwsh
+        run: |
+          python -m venv .build-venv
+          .\.build-venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.build-venv\Scripts\pip.exe install -r backend\requirements.txt
+          .\.build-venv\Scripts\pip.exe install -r backend\requirements-dev.txt
+
+      - name: Backend tests
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $PWD ".pytest_ci"
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          Push-Location backend
+          try {
+            & ..\.build-venv\Scripts\python.exe -m pytest --basetemp="$tmp"
+            if ($LASTEXITCODE -ne 0) { throw "Backend tests failed" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Frontend install and tests
+        working-directory: src/AmericaAudit_Desktop_1.0.0/frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Build AmericaAudit.exe
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+          .\.build-venv\Scripts\pyinstaller.exe --clean --noconfirm america_audit.spec
+          if (-not (Test-Path "dist\AmericaAudit\AmericaAudit.exe")) { throw "AmericaAudit.exe was not produced." }
+
+      - name: Build installer
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        shell: pwsh
+        run: |
+          $isccCandidates = @(
+            "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "Inno Setup 6 ISCC.exe not found." }
+          & $iscc "installer\AmericaAudit.iss"
+          $setup = "release\AmericaAudit_Setup_1.0.0.exe"
+          if (-not (Test-Path $setup)) { throw "Installer was not produced." }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  AmericaAudit_Setup_1.0.0.exe" | Set-Content "$setup.sha256" -Encoding ascii
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmericaAudit_Setup_1.0.0
+          path: |
+            src/AmericaAudit_Desktop_1.0.0/release/AmericaAudit_Setup_1.0.0.exe
+            src/AmericaAudit_Desktop_1.0.0/release/AmericaAudit_Setup_1.0.0.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
