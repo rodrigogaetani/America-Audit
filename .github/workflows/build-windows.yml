@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "source_payload/**"
+      - "packaging/windows/**"
       - ".github/workflows/build-windows.yml"
 
 permissions:
@@ -60,6 +61,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Apply Windows runtime hotfix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python packaging/windows/patch_runtime.py
+
+          $launcher = Get-Content "src\AmericaAudit_Desktop_1.0.0\desktop\desktop_launcher.py" -Raw
+          if ($launcher -notmatch "log_config=None") {
+            throw "Windows runtime logging hotfix was not applied."
+          }
 
       - name: Install Inno Setup
         shell: pwsh
