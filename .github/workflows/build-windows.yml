@@ -64,10 +64,38 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           choco install innosetup --no-progress -y
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             throw "Inno Setup compiler not found after installation."
+          }
+          Write-Host "Inno Setup found at $iscc"
+
+      - name: Patch builder for CI
+        shell: pwsh
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # The local builder used invalid PowerShell syntax for ProgramFiles(x86).
+          # Patch it in the runner so the checked Inno Setup installation is found.
+          $scriptPath = "build_windows.ps1"
+          $script = Get-Content $scriptPath -Raw
+          $script = $script.Replace('$env:ProgramFiles(x86)', '${env:ProgramFiles(x86)}')
+          Set-Content -Path $scriptPath -Value $script -Encoding utf8
+
+          # Force the builder to use the Python 3.12 installed by setup-python,
+          # instead of whichever version the Windows "py -3" launcher selects.
+          if (Test-Path ".build-venv") {
+            Remove-Item -Recurse -Force ".build-venv"
+          }
+          python -m venv .build-venv
+          .\.build-venv\Scripts\python.exe --version
+
+          $patched = Get-Content $scriptPath -Raw
+          if ($patched -notmatch '\$\{env:ProgramFiles\(x86\)\}') {
+            throw "CI patch for ProgramFiles(x86) was not applied."
           }
 
       - name: Build and test America Audit
