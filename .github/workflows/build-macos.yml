@@ -7,6 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "packaging/macos/**"
+      - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
 
 permissions:
@@ -75,7 +76,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 packaging/windows/patch_runtime.py
-          grep -q "log_config=None" src/AmericaAudit_Desktop_1.0.0/desktop/desktop_launcher.py
+          launcher="src/AmericaAudit_Desktop_1.0.0/desktop/desktop_launcher.py"
+          grep -q "log_config=None" "$launcher"
+          grep -q "/api/v1/health" "$launcher"
+          if grep -q "/api/v1/system/health" "$launcher"; then
+            echo "Obsolete health-check URL is still present." >&2
+            exit 1
+          fi
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
