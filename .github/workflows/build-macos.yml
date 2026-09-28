@@ -70,6 +70,13 @@ jobs:
           cp packaging/macos/paths.py "$project/desktop/paths.py"
           cp packaging/macos/america_audit_macos.spec "$project/america_audit_macos.spec"
 
+      - name: Apply packaged-runtime logging hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/windows/patch_runtime.py
+          grep -q "log_config=None" src/AmericaAudit_Desktop_1.0.0/desktop/desktop_launcher.py
+
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
