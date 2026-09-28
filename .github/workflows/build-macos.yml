@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t parts < <(find source_payload -maxdepth 1 -name 'payload_*.txt' | sort)
+          parts=(source_payload/payload_*.txt)
           if [ "${#parts[@]}" -ne 8 ]; then
             echo "Expected 8 source payload chunks; found ${#parts[@]}." >&2
             exit 1
