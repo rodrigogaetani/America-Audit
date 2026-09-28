@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:\n      - "source_payload/**"
+    paths:
+      - "source_payload/**"
       - ".github/workflows/build-windows.yml"
 
 permissions:
@@ -13,95 +14,91 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Reconstruct source archive
+      - name: Reconstruct America Audit source
         shell: pwsh
         run: |
-          $parts = Get-ChildItem build_payload\part_*.txt | Sort-Object Name
-          if (-not $parts) { throw "No source payload parts found." }
-          $base64 = [string]::Concat(($parts | ForEach-Object { Get-Content $_.FullName -Raw }))
-          [IO.File]::WriteAllBytes("AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip", [Convert]::FromBase64String($base64))
-          Expand-Archive -Path "AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip" -DestinationPath "src" -Force
-          if (-not (Test-Path "src\AmericaAudit_Desktop_1.0.0")) { throw "Expected project root was not found after extraction." }
+          $ErrorActionPreference = "Stop"
 
-      - name: Setup Python
+          $parts = Get-ChildItem "source_payload\payload_*.txt" | Sort-Object Name
+          if (-not $parts -or $parts.Count -ne 8) {
+            throw "Expected 8 source payload chunks; found $($parts.Count)."
+          }
+
+          $base64 = [string]::Concat(($parts | ForEach-Object {
+            (Get-Content $_.FullName -Raw).Trim()
+          }))
+
+          Write-Host "Base64 payload length: $($base64.Length)"
+
+          $bytes = [Convert]::FromBase64String($base64)
+          $archive = Join-Path $PWD "AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip"
+          [IO.File]::WriteAllBytes($archive, $bytes)
+
+          Write-Host "Archive bytes: $($bytes.Length)"
+          if ($bytes.Length -lt 500000) {
+            throw "Reconstructed archive is unexpectedly small."
+          }
+
+          Expand-Archive -Path $archive -DestinationPath "src" -Force
+
+          if (-not (Test-Path "src\AmericaAudit_Desktop_1.0.0\build_windows.ps1")) {
+            throw "Expected AmericaAudit_Desktop_1.0.0 project root was not found."
+          }
+
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: "src/AmericaAudit_Desktop_1.0.0/backend/requirements*.txt"
 
-      - name: Setup Node
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: "src/AmericaAudit_Desktop_1.0.0/frontend/package-lock.json"
 
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --no-progress -y
-
-      - name: Prepare Python environment
-        working-directory: src/AmericaAudit_Desktop_1.0.0
-        shell: pwsh
         run: |
-          python -m venv .build-venv
-          .\.build-venv\Scripts\python.exe -m pip install --upgrade pip
-          .\.build-venv\Scripts\pip.exe install -r backend\requirements.txt
-          .\.build-venv\Scripts\pip.exe install -r backend\requirements-dev.txt
-
-      - name: Backend tests
-        working-directory: src/AmericaAudit_Desktop_1.0.0
-        shell: pwsh
-        run: |
-          $tmp = Join-Path $PWD ".pytest_ci"
-          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-          Push-Location backend
-          try {
-            & ..\.build-venv\Scripts\python.exe -m pytest --basetemp="$tmp"
-            if ($LASTEXITCODE -ne 0) { throw "Backend tests failed" }
-          } finally {
-            Pop-Location
+          choco install innosetup --no-progress -y
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler not found after installation."
           }
 
-      - name: Frontend install and tests
-        working-directory: src/AmericaAudit_Desktop_1.0.0/frontend
+      - name: Build and test America Audit
         shell: pwsh
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
-          npm run build
-
-      - name: Build AmericaAudit.exe
         working-directory: src/AmericaAudit_Desktop_1.0.0
-        shell: pwsh
         run: |
-          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-          .\.build-venv\Scripts\pyinstaller.exe --clean --noconfirm america_audit.spec
-          if (-not (Test-Path "dist\AmericaAudit\AmericaAudit.exe")) { throw "AmericaAudit.exe was not produced." }
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          .\build_windows.ps1
 
-      - name: Build installer
-        working-directory: src/AmericaAudit_Desktop_1.0.0
+      - name: Verify installer
         shell: pwsh
+        working-directory: src/AmericaAudit_Desktop_1.0.0
         run: |
-          $isccCandidates = @(
-            "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-          )
-          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw "Inno Setup 6 ISCC.exe not found." }
-          & $iscc "installer\AmericaAudit.iss"
-          $setup = "release\AmericaAudit_Setup_1.0.0.exe"
-          if (-not (Test-Path $setup)) { throw "Installer was not produced." }
-          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
-          "$hash  AmericaAudit_Setup_1.0.0.exe" | Set-Content "$setup.sha256" -Encoding ascii
+          $ErrorActionPreference = "Stop"
+          $installer = "release\AmericaAudit_Setup_1.0.0.exe"
+          if (-not (Test-Path $installer)) {
+            throw "Installer was not generated: $installer"
+          }
+
+          $item = Get-Item $installer
+          Write-Host "Installer size: $($item.Length) bytes"
+
+          if ($item.Length -lt 1000000) {
+            throw "Installer appears unexpectedly small."
+          }
+
+          if (-not (Test-Path "$installer.sha256")) {
+            $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+            "$hash  AmericaAudit_Setup_1.0.0.exe" | Set-Content "$installer.sha256" -Encoding ascii
+          }
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -112,3 +109,16 @@ jobs:
             src/AmericaAudit_Desktop_1.0.0/release/AmericaAudit_Setup_1.0.0.exe.sha256
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmericaAudit-build-diagnostics
+          path: |
+            src/AmericaAudit_Desktop_1.0.0/**/*.log
+            src/AmericaAudit_Desktop_1.0.0/.pytest_tmp/**
+            src/AmericaAudit_Desktop_1.0.0/build/**
+            src/AmericaAudit_Desktop_1.0.0/dist/**
+          if-no-files-found: ignore
+          retention-days: 14
