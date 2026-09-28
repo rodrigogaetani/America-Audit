@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "source_payload/**"
+      - "automation_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -62,6 +63,41 @@ jobs:
 
           test -f src/AmericaAudit_Desktop_1.0.0/desktop/desktop_launcher.py
           test -f src/AmericaAudit_Desktop_1.0.0/frontend/package-lock.json
+
+      - name: Apply automation upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parts=(automation_payload/overlay_*.txt)
+          if [ "${#parts[@]}" -ne 4 ]; then
+            echo "Expected 4 automation overlay chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_automation_overlay.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          src = Path("america_audit_automation_overlay.zip.b64")
+          out = Path("america_audit_automation_overlay.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"))
+          if len(data) < 20_000:
+              raise SystemExit(f"Automation overlay is unexpectedly small: {len(data)} bytes")
+          out.write_bytes(data)
+          print(f"Automation overlay bytes: {len(data)}")
+          PY
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          ditto -x -k america_audit_automation_overlay.zip "$project"
+
+          grep -q "Crear automáticamente desde RTU" "$project/frontend/src/pages/Clients.tsx"
+          grep -q "Cargar y convertir automáticamente" "$project/frontend/src/pages/Conversion.tsx"
+          grep -q "/create-client" "$project/backend/app/taxpayer_profile/router.py"
+
+          echo "Automation upgrade applied successfully."
 
       - name: Apply macOS packaging overlay
         shell: bash
