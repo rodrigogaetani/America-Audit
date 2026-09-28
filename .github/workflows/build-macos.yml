@@ -1,0 +1,228 @@
+name: Build America Audit macOS DMG
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "source_payload/**"
+      - "packaging/macos/**"
+      - ".github/workflows/build-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: build-macos-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-15-intel
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reconstruct America Audit source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t parts < <(find source_payload -maxdepth 1 -name 'payload_*.txt' | sort)
+          if [ "${#parts[@]}" -ne 8 ]; then
+            echo "Expected 8 source payload chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          src = Path("AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip.b64")
+          out = Path("AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"))
+          if len(data) < 500_000:
+              raise SystemExit(f"Reconstructed archive is unexpectedly small: {len(data)} bytes")
+          out.write_bytes(data)
+          print(f"Archive bytes: {len(data)}")
+          PY
+
+          ditto -x -k AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip src
+
+          test -f src/AmericaAudit_Desktop_1.0.0/desktop/desktop_launcher.py
+          test -f src/AmericaAudit_Desktop_1.0.0/frontend/package-lock.json
+
+      - name: Apply macOS packaging overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="src/AmericaAudit_Desktop_1.0.0"
+          cp packaging/macos/paths.py "$project/desktop/paths.py"
+          cp packaging/macos/america_audit_macos.spec "$project/america_audit_macos.spec"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        run: |
+          set -euo pipefail
+          python -m venv .build-venv
+          .build-venv/bin/python -m pip install --upgrade pip
+          .build-venv/bin/pip install -r backend/requirements.txt
+          .build-venv/bin/pip install -r backend/requirements-dev.txt
+          .build-venv/bin/pip install pillow
+
+          echo "Python:"
+          .build-venv/bin/python --version
+          echo "Machine:"
+          uname -m
+
+      - name: Generate macOS app icon
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        run: |
+          set -euo pipefail
+
+          rm -rf assets/AmericaAudit.iconset
+          mkdir -p assets/AmericaAudit.iconset
+
+          .build-venv/bin/python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          src = Path("assets/america_audit.ico")
+          out = Path("assets/AmericaAudit.iconset")
+          img = Image.open(src).convert("RGBA")
+
+          files = {
+              "icon_16x16.png": 16,
+              "icon_16x16@2x.png": 32,
+              "icon_32x32.png": 32,
+              "icon_32x32@2x.png": 64,
+              "icon_128x128.png": 128,
+              "icon_128x128@2x.png": 256,
+              "icon_256x256.png": 256,
+              "icon_256x256@2x.png": 512,
+              "icon_512x512.png": 512,
+              "icon_512x512@2x.png": 1024,
+          }
+
+          for name, size in files.items():
+              resized = img.resize((size, size), Image.Resampling.LANCZOS)
+              resized.save(out / name)
+          PY
+
+          iconutil -c icns assets/AmericaAudit.iconset -o assets/america_audit.icns
+          test -s assets/america_audit.icns
+
+      - name: Backend tests
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        run: |
+          set -euo pipefail
+          rm -rf .pytest_ci
+          mkdir -p .pytest_ci
+          (
+            cd backend
+            ../.build-venv/bin/python -m pytest --basetemp="../.pytest_ci"
+          )
+
+      - name: Frontend tests and production build
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0/frontend
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Build America Audit.app
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+        run: |
+          set -euo pipefail
+          rm -rf build dist release dmg-root
+          .build-venv/bin/pyinstaller --clean --noconfirm america_audit_macos.spec
+
+          app="dist/America Audit.app"
+          test -d "$app"
+          test -x "$app/Contents/MacOS/AmericaAudit"
+
+          echo "Bundle architecture:"
+          file "$app/Contents/MacOS/AmericaAudit"
+
+          # Ad-hoc signing makes the bundle internally consistent.
+          # Developer ID signing/notarization can be layered on later.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          plutil -p "$app/Contents/Info.plist"
+
+      - name: Create DMG
+        shell: bash
+        working-directory: src/AmericaAudit_Desktop_1.0.0
+        run: |
+          set -euo pipefail
+          mkdir -p release dmg-root
+
+          cp -R "dist/America Audit.app" "dmg-root/America Audit.app"
+          ln -s /Applications "dmg-root/Applications"
+
+          dmg="release/AmericaAudit_1.0.0_macOS_${{ matrix.arch }}.dmg"
+
+          hdiutil create \
+            -volname "America Audit" \
+            -srcfolder "dmg-root" \
+            -ov \
+            -format UDZO \
+            "$dmg"
+
+          test -s "$dmg"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+
+          echo "Created:"
+          ls -lh "$dmg" "$dmg.sha256"
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmericaAudit_1.0.0_macOS_${{ matrix.arch }}
+          path: |
+            src/AmericaAudit_Desktop_1.0.0/release/AmericaAudit_1.0.0_macOS_${{ matrix.arch }}.dmg
+            src/AmericaAudit_Desktop_1.0.0/release/AmericaAudit_1.0.0_macOS_${{ matrix.arch }}.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload macOS diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmericaAudit-macOS-${{ matrix.arch }}-diagnostics
+          path: |
+            src/AmericaAudit_Desktop_1.0.0/build/**
+            src/AmericaAudit_Desktop_1.0.0/dist/**
+            src/AmericaAudit_Desktop_1.0.0/.pytest_ci/**
+          if-no-files-found: ignore
+          retention-days: 14
