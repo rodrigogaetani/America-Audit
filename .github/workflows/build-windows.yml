@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "build_payload/**"
+    paths:\n      - "source_payload/**"
       - ".github/workflows/build-windows.yml"
 
 permissions:
@@ -24,7 +23,7 @@ jobs:
         shell: pwsh
         run: |
           $parts = Get-ChildItem build_payload\part_*.txt | Sort-Object Name
-          if (-not $parts) { throw "No build payload parts found." }
+          if (-not $parts) { throw "No source payload parts found." }
           $base64 = [string]::Concat(($parts | ForEach-Object { Get-Content $_.FullName -Raw }))
           [IO.File]::WriteAllBytes("AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip", [Convert]::FromBase64String($base64))
           Expand-Archive -Path "AmericaAudit_Desktop_1.0.0_Windows_Builder_v2.zip" -DestinationPath "src" -Force
