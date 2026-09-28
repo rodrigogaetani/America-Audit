@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "source_payload/**"
+      - "automation_payload/**"
       - "packaging/windows/**"
       - ".github/workflows/build-windows.yml"
 
@@ -51,6 +52,39 @@ jobs:
           if (-not (Test-Path "src\AmericaAudit_Desktop_1.0.0\build_windows.ps1")) {
             throw "Expected AmericaAudit_Desktop_1.0.0 project root was not found."
           }
+
+      - name: Apply automation upgrade
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $parts = Get-ChildItem "automation_payload\overlay_*.txt" | Sort-Object Name
+          if (-not $parts -or $parts.Count -ne 4) {
+            throw "Expected 4 automation overlay chunks; found $($parts.Count)."
+          }
+
+          $base64 = [string]::Concat(($parts | ForEach-Object {
+            (Get-Content $_.FullName -Raw).Trim()
+          }))
+          $bytes = [Convert]::FromBase64String($base64)
+          $overlay = Join-Path $PWD "america_audit_automation_overlay.zip"
+          [IO.File]::WriteAllBytes($overlay, $bytes)
+
+          Write-Host "Automation overlay bytes: $($bytes.Length)"
+          Expand-Archive -Path $overlay -DestinationPath "src\AmericaAudit_Desktop_1.0.0" -Force
+
+          $project = "src\AmericaAudit_Desktop_1.0.0"
+          if (-not (Select-String -Path "$project\frontend\src\pages\Clients.tsx" -Pattern "Crear automáticamente desde RTU" -Quiet)) {
+            throw "RTU onboarding UI was not applied."
+          }
+          if (-not (Select-String -Path "$project\frontend\src\pages\Conversion.tsx" -Pattern "Cargar y convertir automáticamente" -Quiet)) {
+            throw "Direct SAT conversion UI was not applied."
+          }
+          if (-not (Select-String -Path "$project\backend\app\taxpayer_profile\router.py" -Pattern "/create-client" -Quiet)) {
+            throw "RTU onboarding endpoint was not applied."
+          }
+
+          Write-Host "Automation upgrade applied successfully."
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
