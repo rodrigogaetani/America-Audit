@@ -7,6 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
+      - "rtu_robustness_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -99,6 +100,42 @@ jobs:
 
           echo "Automation upgrade applied successfully."
 
+      - name: Apply RTU and document robustness upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parts=(rtu_robustness_payload/overlay_*.txt)
+          if [ "${#parts[@]}" -ne 5 ]; then
+            echo "Expected 5 RTU robustness overlay chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_robustness_overlay.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          src = Path("america_audit_rtu_robustness_overlay.zip.b64")
+          out = Path("america_audit_rtu_robustness_overlay.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"))
+          if len(data) < 30_000:
+              raise SystemExit(f"RTU robustness overlay is unexpectedly small: {len(data)} bytes")
+          out.write_bytes(data)
+          print(f"RTU robustness overlay bytes: {len(data)}")
+          PY
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          ditto -x -k america_audit_rtu_robustness_overlay.zip "$project"
+
+          test -f "$project/backend/app/ingestion/ocr.py"
+          test -f "$project/rtu_patterns/GT/rtu_v3.json"
+          grep -q "pytesseract" "$project/backend/requirements.txt"
+          grep -q "pdf_invalid" "$project/backend/app/ingestion/validation.py"
+
+          echo "RTU/document robustness upgrade applied successfully."
+
       - name: Apply macOS packaging overlay
         shell: bash
         run: |
@@ -140,6 +177,7 @@ jobs:
           .build-venv/bin/pip install -r backend/requirements.txt
           .build-venv/bin/pip install -r backend/requirements-dev.txt
           .build-venv/bin/pip install pillow
+          .build-venv/bin/pip install pyobjc-framework-Vision pyobjc-framework-Quartz
 
           echo "Python:"
           .build-venv/bin/python --version
