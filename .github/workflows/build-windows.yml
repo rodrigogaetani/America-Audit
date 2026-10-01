@@ -7,6 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
+      - "rtu_robustness_payload/**"
       - "packaging/windows/**"
       - ".github/workflows/build-windows.yml"
 
@@ -86,6 +87,45 @@ jobs:
 
           Write-Host "Automation upgrade applied successfully."
 
+      - name: Apply RTU and document robustness upgrade
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $parts = Get-ChildItem "rtu_robustness_payload\overlay_*.txt" | Sort-Object Name
+          if (-not $parts -or $parts.Count -ne 5) {
+            throw "Expected 5 RTU robustness overlay chunks; found $($parts.Count)."
+          }
+
+          $base64 = [string]::Concat(($parts | ForEach-Object {
+            (Get-Content $_.FullName -Raw).Trim()
+          }))
+          $bytes = [Convert]::FromBase64String($base64)
+          $overlay = Join-Path $PWD "america_audit_rtu_robustness_overlay.zip"
+          [IO.File]::WriteAllBytes($overlay, $bytes)
+
+          if ($bytes.Length -lt 30000) {
+            throw "RTU robustness overlay is unexpectedly small."
+          }
+
+          $project = "src\AmericaAudit_Desktop_1.0.0"
+          Expand-Archive -Path $overlay -DestinationPath $project -Force
+
+          if (-not (Test-Path "$project\backend\app\ingestion\ocr.py")) {
+            throw "OCR engine was not applied."
+          }
+          if (-not (Test-Path "$project\rtu_patterns\GT\rtu_v3.json")) {
+            throw "GT RTU v3 pattern was not applied."
+          }
+          if (-not (Select-String -Path "$project\backend\requirements.txt" -Pattern "pytesseract" -Quiet)) {
+            throw "OCR Python dependencies were not applied."
+          }
+          if (-not (Select-String -Path "$project\backend\app\ingestion\validation.py" -Pattern "pdf_invalid" -Quiet)) {
+            throw "Document structural validation was not applied."
+          }
+
+          Write-Host "RTU/document robustness upgrade applied successfully."
+
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -106,6 +146,43 @@ jobs:
           if ($launcher -notmatch "log_config=None") {
             throw "Windows runtime logging hotfix was not applied."
           }
+
+      - name: Install Tesseract OCR for packaging
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          choco install tesseract --no-progress -y
+
+          $tess = @(
+            (Get-Command tesseract.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+            "C:\Program Files\Tesseract-OCR\tesseract.exe",
+            "C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+          if (-not $tess) {
+            throw "Tesseract OCR was not found after installation."
+          }
+
+          $tessRoot = Split-Path -Parent $tess
+          $tessdata = Join-Path $tessRoot "tessdata"
+          New-Item -ItemType Directory -Force -Path $tessdata | Out-Null
+
+          $spa = Join-Path $tessdata "spa.traineddata"
+          if (-not (Test-Path $spa)) {
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/spa.traineddata" -OutFile $spa
+          }
+
+          if (-not (Test-Path (Join-Path $tessdata "eng.traineddata"))) {
+            throw "Tesseract English language data is missing."
+          }
+          if (-not (Test-Path $spa)) {
+            throw "Tesseract Spanish language data is missing."
+          }
+
+          Write-Host "Tesseract: $tess"
+          & $tess --version
+          & $tess --list-langs
 
       - name: Install Inno Setup
         shell: pwsh
