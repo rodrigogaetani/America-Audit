@@ -106,8 +106,8 @@ jobs:
           set -euo pipefail
 
           parts=(rtu_robustness_payload/overlay_*.txt)
-          if [ "${#parts[@]}" -ne 6 ]; then
-            echo "Expected 6 RTU robustness overlay chunks; found ${#parts[@]}." >&2
+          if [ "${#parts[@]}" -ne 7 ]; then
+            echo "Expected 7 RTU robustness overlay chunks; found ${#parts[@]}." >&2
             exit 1
           fi
 
