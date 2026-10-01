@@ -4,7 +4,11 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH)
-hidden = collect_submodules("webview") + collect_submodules("uvicorn")
+hidden = (
+    collect_submodules("webview")
+    + collect_submodules("uvicorn")
+    + ["Vision", "Quartz", "Foundation"]
+)
 
 datas = []
 for rel in [
