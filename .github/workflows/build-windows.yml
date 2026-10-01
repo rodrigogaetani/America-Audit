@@ -93,8 +93,8 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $parts = Get-ChildItem "rtu_robustness_payload\overlay_*.txt" | Sort-Object Name
-          if (-not $parts -or $parts.Count -ne 6) {
-            throw "Expected 6 RTU robustness overlay chunks; found $($parts.Count)."
+          if (-not $parts -or $parts.Count -ne 7) {
+            throw "Expected 7 RTU robustness overlay chunks; found $($parts.Count)."
           }
 
           $base64 = [string]::Concat(($parts | ForEach-Object {
