@@ -9,6 +9,7 @@ on:
       - "automation_payload/**"
       - "rtu_robustness_payload/**"
       - "rtu_engine_v2_payload/**"
+      - "rtu_engine_v2_hotfix_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -173,6 +174,43 @@ jobs:
           grep -q "apply_semantic_overrides" "$project/backend/app/taxpayer_profile/rtu_parser.py"
 
           echo "Generalized RTU engine v2 applied and checksum verified."
+
+      - name: Apply RTU engine v2 hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parts=(rtu_engine_v2_hotfix_payload/hotfix_*.txt)
+          if [ "${#parts[@]}" -ne 2 ]; then
+            echo "Expected 2 RTU engine hotfix payload chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_engine_v2_hotfix.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          from pathlib import Path
+
+          src = Path("america_audit_rtu_engine_v2_hotfix.zip.b64")
+          out = Path("america_audit_rtu_engine_v2_hotfix.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"), validate=True)
+          digest = hashlib.sha256(data).hexdigest()
+          expected = "7e8e662faa7b8a9e068609cfcbd78a0f9ecb7ebeb7d06bd993eca21221e95b1d"
+          if digest != expected:
+              raise SystemExit(f"RTU engine v2 hotfix payload hash mismatch: {digest}")
+          out.write_bytes(data)
+          print(f"RTU engine hotfix bytes: {len(data)}; sha256={digest}")
+          PY
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          ditto -x -k america_audit_rtu_engine_v2_hotfix.zip "$project"
+
+          grep -q "_legacy_pdf_envelope_ok" "$project/backend/app/ingestion/validation.py"
+          grep -q 'current = profile.fields\["establecimientos"\]' "$project/backend/app/taxpayer_profile/rtu_semantic.py"
+
+          echo "RTU engine v2 hotfix applied and checksum verified."
 
       - name: Apply macOS packaging overlay
         shell: bash
