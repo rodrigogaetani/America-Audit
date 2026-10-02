@@ -7,7 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
-      - "rtu_robustness_payload/**"
+      - "rtu_engine_v2_payload/**"
       - "packaging/windows/**"
       - ".github/workflows/build-windows.yml"
 
@@ -87,44 +87,45 @@ jobs:
 
           Write-Host "Automation upgrade applied successfully."
 
-      - name: Apply RTU and document robustness upgrade
+      - name: Apply generalized RTU engine v2
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $parts = Get-ChildItem "rtu_robustness_payload\overlay_*.txt" | Sort-Object Name
-          if (-not $parts -or $parts.Count -ne 7) {
-            throw "Expected 7 RTU robustness overlay chunks; found $($parts.Count)."
+          $parts = Get-ChildItem "rtu_engine_v2_payload\part_*.txt" | Sort-Object Name
+          if (-not $parts -or $parts.Count -ne 6) {
+            throw "Expected 6 RTU engine v2 payload chunks; found $($parts.Count)."
           }
 
           $base64 = [string]::Concat(($parts | ForEach-Object {
             (Get-Content $_.FullName -Raw).Trim()
           }))
           $bytes = [Convert]::FromBase64String($base64)
-          $overlay = Join-Path $PWD "america_audit_rtu_robustness_overlay.zip"
+          $overlay = Join-Path $PWD "america_audit_rtu_engine_v2.zip"
           [IO.File]::WriteAllBytes($overlay, $bytes)
 
-          if ($bytes.Length -lt 30000) {
-            throw "RTU robustness overlay is unexpectedly small."
+          $hash = (Get-FileHash $overlay -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "d250b3bb485db639712a51ee5bda7e7b166636c56240e902aa76bcb955a8b7b0") {
+            throw "RTU engine v2 payload hash mismatch: $hash"
           }
 
           $project = "src\AmericaAudit_Desktop_1.0.0"
           Expand-Archive -Path $overlay -DestinationPath $project -Force
 
-          if (-not (Test-Path "$project\backend\app\ingestion\ocr.py")) {
-            throw "OCR engine was not applied."
+          if (-not (Test-Path "$project\backend\app\taxpayer_profile\rtu_semantic.py")) {
+            throw "Generalized semantic RTU parser was not applied."
           }
-          if (-not (Test-Path "$project\rtu_patterns\GT\rtu_v3.json")) {
-            throw "GT RTU v3 pattern was not applied."
+          if (-not (Test-Path "$project\backend\tests\test_rtu_generalization.py")) {
+            throw "RTU generalization tests were not applied."
           }
-          if (-not (Select-String -Path "$project\backend\requirements.txt" -Pattern "pytesseract" -Quiet)) {
-            throw "OCR Python dependencies were not applied."
+          if (-not (Select-String -Path "$project\backend\app\ingestion\detector.py" -Pattern "looks_like_rtu_text" -Quiet)) {
+            throw "Semantic RTU detection was not applied."
           }
-          if (-not (Select-String -Path "$project\backend\app\ingestion\validation.py" -Pattern "pdf_invalid" -Quiet)) {
-            throw "Document structural validation was not applied."
+          if (-not (Select-String -Path "$project\backend\app\taxpayer_profile\rtu_parser.py" -Pattern "apply_semantic_overrides" -Quiet)) {
+            throw "Semantic RTU parser integration was not applied."
           }
 
-          Write-Host "RTU/document robustness upgrade applied successfully."
+          Write-Host "Generalized RTU engine v2 applied and checksum verified."
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
