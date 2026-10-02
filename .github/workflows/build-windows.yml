@@ -7,6 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
+      - "rtu_robustness_payload/**"
       - "rtu_engine_v2_payload/**"
       - "packaging/windows/**"
       - ".github/workflows/build-windows.yml"
@@ -86,6 +87,38 @@ jobs:
           }
 
           Write-Host "Automation upgrade applied successfully."
+
+      - name: Apply OCR/document runtime prerequisites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $parts = Get-ChildItem "rtu_robustness_payload\overlay_*.txt" | Sort-Object Name
+          if (-not $parts -or $parts.Count -ne 7) {
+            throw "Expected 7 RTU runtime prerequisite chunks; found $($parts.Count)."
+          }
+
+          $base64 = [string]::Concat(($parts | ForEach-Object {
+            (Get-Content $_.FullName -Raw).Trim()
+          }))
+          $bytes = [Convert]::FromBase64String($base64)
+          $overlay = Join-Path $PWD "america_audit_rtu_runtime_prerequisites.zip"
+          [IO.File]::WriteAllBytes($overlay, $bytes)
+
+          $project = "src\AmericaAudit_Desktop_1.0.0"
+          Expand-Archive -Path $overlay -DestinationPath $project -Force
+
+          if (-not (Select-String -Path "$project\backend\requirements.txt" -Pattern "pytesseract" -Quiet)) {
+            throw "OCR dependency pytesseract was not applied."
+          }
+          if (-not (Select-String -Path "$project\backend\app\taxpayer_profile\pdf_text.py" -Pattern "ocr_pdf" -Quiet)) {
+            throw "RTU PDF OCR fallback was not applied."
+          }
+          if (-not (Select-String -Path "$project\build_windows.ps1" -Pattern "Tesseract OCR" -Quiet)) {
+            throw "Bundled Tesseract build support was not applied."
+          }
+
+          Write-Host "OCR/document runtime prerequisites applied successfully."
 
       - name: Apply generalized RTU engine v2
         shell: pwsh
