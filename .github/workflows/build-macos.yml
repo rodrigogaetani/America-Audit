@@ -7,7 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
-      - "rtu_robustness_payload/**"
+      - "rtu_engine_v2_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -100,41 +100,44 @@ jobs:
 
           echo "Automation upgrade applied successfully."
 
-      - name: Apply RTU and document robustness upgrade
+      - name: Apply generalized RTU engine v2
         shell: bash
         run: |
           set -euo pipefail
 
-          parts=(rtu_robustness_payload/overlay_*.txt)
-          if [ "${#parts[@]}" -ne 7 ]; then
-            echo "Expected 7 RTU robustness overlay chunks; found ${#parts[@]}." >&2
+          parts=(rtu_engine_v2_payload/part_*.txt)
+          if [ "${#parts[@]}" -ne 6 ]; then
+            echo "Expected 6 RTU engine v2 payload chunks; found ${#parts[@]}." >&2
             exit 1
           fi
 
-          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_robustness_overlay.zip.b64
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_engine_v2.zip.b64
 
           python3 - <<'PY'
           import base64
+          import hashlib
           from pathlib import Path
 
-          src = Path("america_audit_rtu_robustness_overlay.zip.b64")
-          out = Path("america_audit_rtu_robustness_overlay.zip")
-          data = base64.b64decode(src.read_text(encoding="ascii"))
-          if len(data) < 30_000:
-              raise SystemExit(f"RTU robustness overlay is unexpectedly small: {len(data)} bytes")
+          src = Path("america_audit_rtu_engine_v2.zip.b64")
+          out = Path("america_audit_rtu_engine_v2.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"), validate=True)
+          digest = hashlib.sha256(data).hexdigest()
+          expected = "d250b3bb485db639712a51ee5bda7e7b166636c56240e902aa76bcb955a8b7b0"
+          if digest != expected:
+              raise SystemExit(f"RTU engine v2 payload hash mismatch: {digest}")
           out.write_bytes(data)
-          print(f"RTU robustness overlay bytes: {len(data)}")
+          print(f"RTU engine v2 bytes: {len(data)}; sha256={digest}")
           PY
 
           project="src/AmericaAudit_Desktop_1.0.0"
-          ditto -x -k america_audit_rtu_robustness_overlay.zip "$project"
+          ditto -x -k america_audit_rtu_engine_v2.zip "$project"
 
-          test -f "$project/backend/app/ingestion/ocr.py"
-          test -f "$project/rtu_patterns/GT/rtu_v3.json"
-          grep -q "pytesseract" "$project/backend/requirements.txt"
-          grep -q "pdf_invalid" "$project/backend/app/ingestion/validation.py"
+          test -f "$project/backend/app/taxpayer_profile/rtu_semantic.py"
+          test -f "$project/backend/tests/test_rtu_generalization.py"
+          grep -q "looks_like_rtu_text" "$project/backend/app/ingestion/detector.py"
+          grep -q "apply_semantic_overrides" "$project/backend/app/taxpayer_profile/rtu_parser.py"
 
-          echo "RTU/document robustness upgrade applied successfully."
+          echo "Generalized RTU engine v2 applied and checksum verified."
 
       - name: Apply macOS packaging overlay
         shell: bash
