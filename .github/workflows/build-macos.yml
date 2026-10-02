@@ -7,6 +7,7 @@ on:
     paths:
       - "source_payload/**"
       - "automation_payload/**"
+      - "rtu_robustness_payload/**"
       - "rtu_engine_v2_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
@@ -99,6 +100,40 @@ jobs:
           grep -q "/create-client" "$project/backend/app/taxpayer_profile/router.py"
 
           echo "Automation upgrade applied successfully."
+
+      - name: Apply OCR/document runtime prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parts=(rtu_robustness_payload/overlay_*.txt)
+          if [ "${#parts[@]}" -ne 7 ]; then
+            echo "Expected 7 RTU runtime prerequisite chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_runtime_prerequisites.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          src = Path("america_audit_rtu_runtime_prerequisites.zip.b64")
+          out = Path("america_audit_rtu_runtime_prerequisites.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"), validate=True)
+          if len(data) < 30_000:
+              raise SystemExit(f"RTU runtime prerequisites overlay is unexpectedly small: {len(data)} bytes")
+          out.write_bytes(data)
+          print(f"RTU runtime prerequisites bytes: {len(data)}")
+          PY
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          ditto -x -k america_audit_rtu_runtime_prerequisites.zip "$project"
+
+          grep -q "pytesseract" "$project/backend/requirements.txt"
+          grep -q "ocr_pdf" "$project/backend/app/taxpayer_profile/pdf_text.py"
+
+          echo "OCR/document runtime prerequisites applied successfully."
 
       - name: Apply generalized RTU engine v2
         shell: bash
