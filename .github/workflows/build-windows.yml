@@ -189,7 +189,7 @@ jobs:
           if (-not (Select-String -Path "$project\backend\app\ingestion\validation.py" -Pattern "_legacy_pdf_envelope_ok" -Quiet)) {
             throw "Legacy PDF preservation hotfix was not applied."
           }
-          if (-not (Select-String -Path "$project\backend\app\taxpayer_profile\rtu_semantic.py" -Pattern "current = profile.fields\[\"establecimientos\"\]" -Quiet)) {
+          if (-not (Select-String -Path "$project\backend\app\taxpayer_profile\rtu_semantic.py" -SimpleMatch -Pattern 'current = profile.fields["establecimientos"]' -Quiet)) {
             throw "RTU commercial-name/establishment hotfix was not applied."
           }
 
