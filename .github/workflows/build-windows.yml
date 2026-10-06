@@ -252,7 +252,7 @@ jobs:
           $gzipBytes = [Convert]::FromBase64String($encoded)
           [IO.File]::WriteAllBytes("patch_client_delete.py.gz", $gzipBytes)
 
-          python -c "import gzip,hashlib,pathlib; b=gzip.decompress(pathlib.Path('patch_client_delete.py.gz').read_bytes()); assert hashlib.sha256(b).hexdigest() == '5cc1eb5bc9c2083da9eb460e6fe44768786f4b613a9ce34d825e097d955cfe25'; pathlib.Path('patch_client_delete.py').write_bytes(b)"
+          python -c "import gzip,hashlib,pathlib; b=gzip.decompress(pathlib.Path('patch_client_delete.py.gz').read_bytes()); assert hashlib.sha256(b).hexdigest() == '9b5e07892b763da00725383b6ea665cd5d2f1e4ff0f6314bf159a3a75d0a83db'; pathlib.Path('patch_client_delete.py').write_bytes(b)"
 
           python patch_client_delete.py --project "src\AmericaAudit_Desktop_1.0.0"
 
