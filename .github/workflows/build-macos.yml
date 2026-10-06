@@ -11,6 +11,7 @@ on:
       - "rtu_engine_v2_payload/**"
       - "rtu_engine_v2_hotfix_payload/**"
       - "rtu_engine_v3_payload/**"
+      - "client_delete_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -277,6 +278,33 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Apply client deletion feature
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import base64, gzip, hashlib
+          from pathlib import Path
+
+          encoded = Path("client_delete_payload/patch_client_delete.py.gz.b64").read_text(encoding="ascii").strip()
+          raw = gzip.decompress(base64.b64decode(encoded))
+          digest = hashlib.sha256(raw).hexdigest()
+          expected = "5cc1eb5bc9c2083da9eb460e6fe44768786f4b613a9ce34d825e097d955cfe25"
+          if digest != expected:
+              raise SystemExit(f"Client delete patch hash mismatch: {digest}")
+          Path("patch_client_delete.py").write_bytes(raw)
+          PY
+
+          python3 patch_client_delete.py --project "src/AmericaAudit_Desktop_1.0.0"
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          grep -Fq '@router.delete("/{client_id}", status_code=204)' "$project/backend/app/clients/router.py"
+          grep -Fq 'CLIENTS_DELETE = "clients:delete"' "$project/backend/app/auth/permissions.py"
+          grep -Fq 'Eliminar' "$project/frontend/src/pages/Clients.tsx"
+
+          echo "Client deletion feature applied successfully."
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
