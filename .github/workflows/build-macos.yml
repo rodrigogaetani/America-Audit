@@ -10,6 +10,7 @@ on:
       - "rtu_robustness_payload/**"
       - "rtu_engine_v2_payload/**"
       - "rtu_engine_v2_hotfix_payload/**"
+      - "rtu_engine_v3_payload/**"
       - "packaging/macos/**"
       - "packaging/windows/**"
       - ".github/workflows/build-macos.yml"
@@ -211,6 +212,45 @@ jobs:
           grep -q 'current = profile.fields\["establecimientos"\]' "$project/backend/app/taxpayer_profile/rtu_semantic.py"
 
           echo "RTU engine v2 hotfix applied and checksum verified."
+
+      - name: Apply RTU engine v3
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parts=(rtu_engine_v3_payload/v3_*.txt)
+          if [ "${#parts[@]}" -ne 9 ]; then
+            echo "Expected 9 RTU engine v3 payload chunks; found ${#parts[@]}." >&2
+            exit 1
+          fi
+
+          cat "${parts[@]}" | tr -d '\r\n\t ' > america_audit_rtu_engine_v3.zip.b64
+
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          from pathlib import Path
+
+          src = Path("america_audit_rtu_engine_v3.zip.b64")
+          out = Path("america_audit_rtu_engine_v3.zip")
+          data = base64.b64decode(src.read_text(encoding="ascii"))
+          digest = hashlib.sha256(data).hexdigest()
+          expected = "a56dc42ef29886602acf3048071af3970f41ae9126318dea0fe6c67f79a4faf5"
+          if digest != expected:
+              raise SystemExit(f"RTU engine v3 payload hash mismatch: {digest}")
+          out.write_bytes(data)
+          print(f"RTU engine v3 bytes: {len(data)}; SHA256: {digest}")
+          PY
+
+          project="src/AmericaAudit_Desktop_1.0.0"
+          ditto -x -k america_audit_rtu_engine_v3.zip "$project"
+
+          test -f "$project/backend/app/taxpayer_profile/rtu_resilient.py"
+          grep -q "RTU_DUAL_READ" "$project/backend/app/taxpayer_profile/pdf_text.py"
+          grep -q "apply_resilient_overrides" "$project/backend/app/taxpayer_profile/rtu_parser.py"
+          grep -q 'get_text("text", sort=True)' "$project/backend/app/ingestion/detector.py"
+
+          echo "RTU engine v3 applied and checksum verified."
 
       - name: Apply macOS packaging overlay
         shell: bash
